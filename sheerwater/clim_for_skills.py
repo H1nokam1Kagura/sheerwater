@@ -42,6 +42,10 @@ def clim_stats_raw(data_name, variable, first_year=1985, last_year=2014, is_fore
     ds = data_fn(start_time, end_time, variable=variable, agg_days=1, grid=grid, mask=mask, region=region)
     ds = ds[[variable]]
 
+    # Capture units before the groupby-reduce below drops attrs; check both per-variable and
+    # dataset-level attrs since sources use either convention.
+    units = ds[variable].attrs.get('units') or ds.attrs.get('units')
+
     try:
         ds = add_dayofyear(ds)
         ds = pad_with_leapdays(ds)
@@ -49,13 +53,26 @@ def clim_stats_raw(data_name, variable, first_year=1985, last_year=2014, is_fore
         raise ValueError(f"Underlying data source {data_name} does not have full coverage "
                          f"of the climatology period {first_year}-{last_year}.")
 
-    if grid in ["global0_25", "global0_1", "global0_05"]:
-        ds = ds.chunk({'lat': 48, 'lon': 48, 'time': -1})
+    # Eager labels needed for the groupby below once `ds` is dask-backed/chunked.
+    dayofyear_labels = np.unique(ds['dayofyear'].values)
 
-    grouped = ds.groupby('dayofyear')
+    # NOTE: rechunk-before-groupby disabled while testing Planette (its own fetch already
+    # rechunks time-like dims to single chunks). Re-enable for era5/imerg/chirps/ecmwf_ifs_er:
+    # rechunk = {'lat': 48, 'lon': 48, 'time': -1}
+    # if 'prediction_timedelta' in ds.dims:
+    #     rechunk['prediction_timedelta'] = -1
+    # ds = ds.chunk(rechunk)
+
+    grouped = ds.groupby(dayofyear=xr.groupers.UniqueGrouper(labels=dayofyear_labels))
     mean_ds = grouped.mean(dim='time', skipna=True).rename({variable: 'avg'})
     std_ds = grouped.std(dim='time', skipna=True).rename({variable: 'std'})
     ds = xr.merge([mean_ds, std_ds])
+
+    # std shares the mean's units (unlike variance, which would be squared).
+    if units is not None:
+        ds['avg'].attrs['units'] = units
+        ds['std'].attrs['units'] = units
+
     return ds
 
 
@@ -67,7 +84,7 @@ def clim_stats_raw(data_name, variable, first_year=1985, last_year=2014, is_fore
 def clim_daily(start_time, end_time, variable, data_name, agg_days=1,  # noqa: ARG001
                 first_year=1985, last_year=2014, is_forecast=False,
                 forecast_lead_days=None, prob_type='deterministic',  # noqa: ARG001
-                grid='global0_25', mask='lsm', region='global'):
+                grid='global0_25', mask=None, region='global'):
     """Standard-format daily climatology (mean + std) for a given data source.
     """
     raw = clim_stats_raw(data_name, variable, first_year=first_year, last_year=last_year,
@@ -98,12 +115,12 @@ def clim_daily(start_time, end_time, variable, data_name, agg_days=1,  # noqa: A
        backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
 def clim_era5(variable, agg_days=1,  # noqa: ARG001
               prob_type='deterministic',  # noqa: ARG001
-              grid='global0_25', mask='lsm', region='global'):
+              grid='global0_25', mask=None, region='global'):
     """Daily ERA5 climatology (mean + std), 1990-2019.
     """
     return clim_daily('1904-01-01', '1904-12-31', variable, data_name='era5',
                       first_year=1990, last_year=2019, is_forecast=False,
-                      forecast_lead_days=46, grid=grid, mask=mask, region=region)
+                      forecast_lead_days=1, grid=grid, mask=mask, region=region)
 
 
 @dask_remote
@@ -112,12 +129,12 @@ def clim_era5(variable, agg_days=1,  # noqa: ARG001
        backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
 def clim_imerg(variable, agg_days=1,  # noqa: ARG001
                prob_type='deterministic',  # noqa: ARG001
-               grid='global0_25', mask='lsm', region='global'):
+               grid='global0_25', mask=None, region='global'):
     """Daily IMERG climatology (mean + std), 1998-2024.
     """
     return clim_daily('1904-01-01', '1904-12-31', variable, data_name='imerg_final',
                       first_year=1998, last_year=2024, is_forecast=False,
-                      forecast_lead_days=46, grid=grid, mask=mask, region=region)
+                      forecast_lead_days=1, grid=grid, mask=mask, region=region)
 
 
 @dask_remote
@@ -126,12 +143,29 @@ def clim_imerg(variable, agg_days=1,  # noqa: ARG001
        backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
 def clim_chirps(variable, agg_days=1,  # noqa: ARG001
                 prob_type='deterministic',  # noqa: ARG001
-                grid='global0_25', mask='lsm', region='global'):
+                grid='global0_25', mask=None, region='global'):
     """Daily CHIRPS v3 climatology (mean + std), 1998-2024.
     """
     return clim_daily('1904-01-01', '1904-12-31', variable, data_name='chirps_v3',
                       first_year=1998, last_year=2024, is_forecast=False,
-                      forecast_lead_days=46, grid=grid, mask=mask, region=region)
+                      forecast_lead_days=1, grid=grid, mask=mask, region=region)
+
+
+@dask_remote
+@cache(cache=False,
+       cache_args=['variable', 'agg_days', 'prob_type', 'grid', 'mask', 'region'],
+       backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
+def clim_oisst(variable, agg_days=1,  # noqa: ARG001
+               prob_type='deterministic',  # noqa: ARG001
+               grid='global0_25', mask=None, region='global'):
+    """Daily NOAA OISST v2.1 climatology (mean + std), 1991-2020 (WMO 30-year normal period).
+
+    `mask` defaults to None, not 'lsm' -- an 'lsm' mask keeps land and drops ocean, which is
+    backwards for SST (OISST's own data is already only defined over ocean; land is NaN).
+    """
+    return clim_daily('1904-01-01', '1904-12-31', variable, data_name='oisst',
+                      first_year=1991, last_year=2020, is_forecast=False,
+                      forecast_lead_days=1, grid=grid, mask=mask, region=region)
 
 
 @dask_remote
@@ -140,9 +174,26 @@ def clim_chirps(variable, agg_days=1,  # noqa: ARG001
        backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
 def clim_ecmwf_ifs_er(variable, agg_days=1,  # noqa: ARG001
                       prob_type='deterministic',  # noqa: ARG001
-                      grid='global0_25', mask='lsm', region='global'):
+                      grid='global0_25', mask=None, region='global'):
     """Daily, per-lead ECMWF IFS extended-range climatology (mean + std), 2018-2022.
     """
     return clim_daily('1904-01-01', '1904-12-31', variable, data_name='ecmwf_ifs_er',
                       first_year=2018, last_year=2022, is_forecast=True,
+                      grid=grid, mask=mask, region=region)
+
+
+@dask_remote
+@cache(cache=False,
+       cache_args=['variable', 'agg_days', 'prob_type', 'grid', 'mask', 'region'],
+       backend_kwargs={'chunking': {'lat': 300, 'lon': 300, 'init_time': 365, 'prediction_timedelta': 1}})
+def clim_ecmwf_ifs_planette_reforecast(variable, agg_days=1,  # noqa: ARG001
+                                       prob_type='deterministic',  # noqa: ARG001
+                                       grid='global1_5', mask='lsm', region='global'):
+    """Daily, per-lead climatology (mean + std) for Planette's ECMWF IFS S2S reforecast archive, 2006-2024.
+
+    Note: Planette's archive only has data on the native "global1_5" grid (see
+    `ecmwf_ifs_planette_reforecast`), so `grid` must be "global1_5".
+    """
+    return clim_daily('1904-01-01', '1904-12-31', variable, data_name='ecmwf_ifs_planette_reforecast',
+                      first_year=2006, last_year=2024, is_forecast=True,
                       grid=grid, mask=mask, region=region)

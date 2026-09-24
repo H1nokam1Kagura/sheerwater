@@ -67,35 +67,49 @@ def densify_fcst(fcst, start_time=None, end_time=None):
 def get_variable(variable_name, variable_type='era5'):
     """Converts a variable in any other type to a variable name of the requested type."""
     variable_ordering = ['sheerwater', 'era5', 'ecmwf_hres',
-                         'ecmwf_ifs_er', 'salient', 'abc', 'ghcn', 'era5_land', 'cumulus_ai']
+                         'ecmwf_ifs_er', 'salient', 'abc', 'ghcn', 'era5_land', 'cumulus_ai', 'planette', 'oisst']
 
     weather_variables = [
         # Static variables (2):
-        ('z', 'geopotential', 'geopotential', None, None, None, None, None, None),
-        ('lsm', 'land_sea_mask', 'land_sea_mask', None, None, None, None, None, None),
+        ('z', 'geopotential', 'geopotential', None, None, None, None, None, None, None, None),
+        ('lsm', 'land_sea_mask', 'land_sea_mask', None, None, None, None, None, None, None, None),
 
         # Surface variables (6):
-        ('tmp2m', '2m_temperature', '2m_temperature', '2m_temperature', 'temp', 'tmp2m', 'temp', 't2m', None),
+        ('tmp2m', '2m_temperature', '2m_temperature', '2m_temperature',
+         'temp', 'tmp2m', 'temp', 't2m', None, 't2m', None),
         ("d2m", "2m_dewpoint_temperature", '2m_dewpoint_temperature',
-         '2m_dewpoint_temperature', None, None, None, 'd2m', None),
+         '2m_dewpoint_temperature', None, None, None, 'd2m', None, None, None),
         # relative humidity at surface isn't natively supported in ERA5, derived from d2m and tmp2m
-        ("rh2m", None, None, None, None, None, None, None, None),
+        ("rh2m", None, None, None, None, None, None, None, None, None, None),
         ('precip', 'total_precipitation', 'total_precipitation_6hr', 'total_precipitation_24hr',
-         'precip', 'precip', 'precip', 'tp', 'total_precipitation_24h_acc'),
-        ("tcwv", "total_column_water_vapour", "total_column_water_vapour", None, None, None, None, None, None),
-        ("vwind10m", "10m_v_component_of_wind", "10m_v_component_of_wind", None, None, None, None, 'v10', None),
-        ("uwind10m", "10m_u_component_of_wind", "10m_u_component_of_wind", None, None, None, None, 'u10', None),
-        ("msl", "mean_sea_level_pressure", "mean_sea_level_pressure", None, None, None, None, None, None),
-        ("tisr", "toa_incident_solar_radiation", "toa_incident_solar_radiation", None, "tsi", None, None, 'ssr', None),
-        ("ssrd", "surface_solar_radiation_downwards", None, None, "tsi", None, None, 'ssrd', None),
+         'precip', 'precip', 'precip', 'tp', 'total_precipitation_24h_acc', 'pr', None),
+        # Note: `tcwv` is not published in Planette's archive (not among the single-level
+        # variables listed at https://github.com/PlanetteAI/planette_ifs_archive), so it's left
+        # unmapped there.
+        ("tcwv", "total_column_water_vapour", "total_column_water_vapour",
+         None, None, None, None, None, None, None, None),
+        ("vwind10m", "10m_v_component_of_wind", "10m_v_component_of_wind",
+         None, None, None, None, 'v10', None, 'v10m', None),
+        ("uwind10m", "10m_u_component_of_wind", "10m_u_component_of_wind",
+         None, None, None, None, 'u10', None, 'u10m', None),
+        ("msl", "mean_sea_level_pressure", "mean_sea_level_pressure", None, None, None, None, None, None, None, None),
+        ("tisr", "toa_incident_solar_radiation", "toa_incident_solar_radiation",
+         None, "tsi", None, None, 'ssr', None, None, None),
+        ("ssrd", "surface_solar_radiation_downwards", None, None, "tsi", None, None, 'ssrd', None, None, None),
+        # OISST is observational, not a forecast, but still slots into this table for
+        # cross-source variable-name mapping via get_variable('sst', 'oisst').
+        ("sst", "sea_surface_temperature", None, None, None, None, None, None, None, 'sst', 'sst'),
 
         # Atmospheric variables (6):
-        ("tmp", "temperature", "temperature", None, None, None, None, None, None),
-        ("uwind", "u_component_of_wind", "u_component_of_wind", None, None, None, None, None, None),
-        ("vwind", "v_component_of_wind", "v_component_of_wind", None, None, None, None, None, None),
-        ("hgt", "geopotential", "geopotential", None, None, None, None, None, None),
-        ("w", "vertical_velocity", "vertical_velocity", None, None, None, None, None, None),
-        ("q", "specific_humidity", "specific_humidity", None, None, None, None, None, None),
+        # Note: Planette's atmospheric fields live on pressure levels in a separate archive group
+        # ("pressure/1p5latx1p5lon") that isn't fetched by sheerwater.forecasts.planette_ifs_reforecast
+        # yet, so these are left unmapped for now.
+        ("tmp", "temperature", "temperature", None, None, None, None, None, None, None, None),
+        ("uwind", "u_component_of_wind", "u_component_of_wind", None, None, None, None, None, None, None, None),
+        ("vwind", "v_component_of_wind", "v_component_of_wind", None, None, None, None, None, None, None, None),
+        ("hgt", "geopotential", "geopotential", None, None, None, None, None, None, None, None),
+        ("w", "vertical_velocity", "vertical_velocity", None, None, None, None, None, None, None, None),
+        ("q", "specific_humidity", "specific_humidity", None, None, None, None, None, None, None, None),
     ]
 
     name_index = variable_ordering.index(variable_type)

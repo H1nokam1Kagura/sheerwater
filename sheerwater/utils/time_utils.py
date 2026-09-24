@@ -181,6 +181,10 @@ def pad_with_leapdays(ds, time_dim="time"):
     missing_leaps = [x for x in np.unique(ds[time_dim].dt.year.values) if not calendar.isleap(x)]
     missing_dates = [dateparser.parse(f"{x}-02-28") for x in missing_leaps]
 
+    # Drop any dates not actually present in the dataset (e.g. a partial trailing/leading year)
+    present_dates = set(pd.DatetimeIndex(ds[time_dim].values))
+    missing_dates = [d for d in missing_dates if pd.Timestamp(d) in present_dates]
+
     # Get the value on the 28th for these years
     missing_ds = ds.sel({time_dim: missing_dates})
 
